@@ -473,27 +473,31 @@
     }
 
     // 图片转 Base64
-    window.handleImageUpload = function(event) {
-        const file = event.target.files[0];
-        if(!file) return;
-        const reader = new FileReader();
-        reader.onload = function(e) {
-            const img = new Image(); img.src = e.target.result;
-            img.onload = function() {
-                // Canvas 压缩图片尺寸，防止 Firebase 文档过大
-                const canvas = document.createElement('canvas'); const ctx = canvas.getContext('2d');
-                const MAX_WIDTH = 300; const scaleSize = MAX_WIDTH / img.width;
-                canvas.width = MAX_WIDTH; canvas.height = img.height * scaleSize;
-                ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-                const base64 = canvas.toDataURL('image/jpeg', 0.8);
-                document.getElementById('form-book-base64').value = base64;
-                document.getElementById('form-book-cover-img').src = base64;
-                document.getElementById('form-book-cover-img').classList.remove('hidden');
-                document.getElementById('form-book-cover-text').classList.add('hidden');
-            }
-        };
-        reader.readAsDataURL(file);
-    }
+   // ==== 增强版图片处理 ====
+window.handleImageUpload = (e) => {
+    const file = e.target.files[0]; if(!file) return;
+    const r = new FileReader();
+    r.onload = e => {
+        const img = new Image(); img.src = e.target.result;
+        img.onload = () => {
+            const canvas = document.createElement('canvas'); const ctx = canvas.getContext('2d');
+            
+            // 将分辨率从 300 提高到 1000，保证细小文字清晰，同时轻微降低画质防止数据库爆满
+            const MAX_WIDTH = 1000; 
+            const scaleSize = MAX_WIDTH / img.width;
+            canvas.width = MAX_WIDTH; 
+            canvas.height = img.height * scaleSize;
+            
+            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+            const b64 = canvas.toDataURL('image/jpeg', 0.6); // 0.6 是压缩率，平衡清晰度与容量
+            
+            document.getElementById('form-book-base64').value = b64;
+            document.getElementById('form-book-cover-img').src = b64;
+            document.getElementById('form-book-cover-img').classList.remove('hidden');
+            document.getElementById('form-book-cover-text').classList.add('hidden');
+        }
+    }; r.readAsDataURL(file);
+}
 
     window.saveBook = async function() {
         const id = document.getElementById('form-book-id').value.trim().toUpperCase();
