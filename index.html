@@ -472,32 +472,78 @@
         document.getElementById('modal-book').classList.remove('hidden'); document.getElementById('modal-book').classList.add('flex');
     }
 
-    // 图片转 Base64
-   // ==== 增强版图片处理 ====
-window.handleImageUpload = (e) => {
-    const file = e.target.files[0]; if(!file) return;
-    const r = new FileReader();
-    r.onload = e => {
-        const img = new Image(); img.src = e.target.result;
-        img.onload = () => {
-            const canvas = document.createElement('canvas'); const ctx = canvas.getContext('2d');
+    // 新增一个全局变量，专门用来存放给 AI 看的高清图
+    let ocrHighResBase64 = "";
+
+    // ==== 1. 图片上传处理 (分离：数据库小图 + AI高清图) ====
+    window.handleImageUpload = (e) => {
+        const file = e.target.files[0]; if(!file) return;
+        const r = new FileReader();
+        r.onload = e => {
+            const img = new Image(); img.src = e.target.result;
+            img.onload = () => {
+                // [给数据库存的缩略图 - 宽300]
+                const canvasThumb = document.createElement('canvas'); 
+                const ctxThumb = canvasThumb.getContext('2d');
+                canvasThumb.width = 300; 
+                canvasThumb.height = img.height * (300 / img.width);
+                ctxThumb.drawImage(img, 0, 0, canvasThumb.width, canvasThumb.height);
+                const thumbB64 = canvasThumb.toDataURL('image/jpeg', 0.6);
+                
+                // 显示在网页上，并存入隐藏表单准备上传数据库
+                document.getElementById('form-book-base64').value = thumbB64;
+                document.getElementById('form-book-cover-img').src = thumbB64;
+                document.getElementById('form-book-cover-img').classList.remove('hidden');
+                document.getElementById('form-book-cover-text').classList.add('hidden');
+
+                // [给 AI 识别用的超高清图 - 宽1200]
+                const canvasOCR = document.createElement('canvas'); 
+                const ctxOCR = canvasOCR.getContext('2d');
+                canvasOCR.width = 1200; 
+                canvasOCR.height = img.height * (1200 / img.width);
+                ctxOCR.drawImage(img, 0, 0, canvasOCR.width, canvasOCR.height);
+                ocrHighResBase64 = canvasOCR.toDataURL('image/jpeg', 0.9); // 存在内存里，不上云端
+            }
+        }; r.readAsDataURL(file);
+    }
+
+    // ==== 2. AI 识别处理 (增加实时进度条) ====
+    window.runOCR = async () => {
+        if(!ocrHighResBase64) return alert("请先上传照片！");
+        
+        const btn = document.getElementById('btn-ocr');
+        const resultBox = document.getElementById('ocr-result');
+        
+        btn.disabled = true; // 锁定按钮防止重复点击
+        resultBox.value = "⏳ 正在初始化 AI 引擎...\n\n(注意：首次使用需要下载中英文字库，这取决于您的网速，请耐心等待 10 - 30 秒，以后就会很快了！)";
+
+        try {
+            // 调用 Tesseract.js，并开启进度监听
+            const result = await Tesseract.recognize(ocrHighResBase64, 'eng+msa+chi_sim', {
+                logger: m => {
+                    console.log(m); // 方便在 F12 控制台排错
+                    if (m.status === 'recognizing text') {
+                        btn.innerText = `🔍 AI 正在阅读中... ${Math.round(m.progress * 100)}%`;
+                    } else if (m.status.includes('loading') || m.status.includes('downloading')) {
+                        btn.innerText = `⏳ 正在下载 AI 语言包...`;
+                    }
+                }
+            });
             
-            // 将分辨率从 300 提高到 1000，保证细小文字清晰，同时轻微降低画质防止数据库爆满
-            const MAX_WIDTH = 1000; 
-            const scaleSize = MAX_WIDTH / img.width;
-            canvas.width = MAX_WIDTH; 
-            canvas.height = img.height * scaleSize;
+            // 提取成功
+            resultBox.value = result.data.text;
+            window.showToast("🎉 识别完成！请手动复制");
             
-            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-            const b64 = canvas.toDataURL('image/jpeg', 0.6); // 0.6 是压缩率，平衡清晰度与容量
-            
-            document.getElementById('form-book-base64').value = b64;
-            document.getElementById('form-book-cover-img').src = b64;
-            document.getElementById('form-book-cover-img').classList.remove('hidden');
-            document.getElementById('form-book-cover-text').classList.add('hidden');
+        } catch(e) {
+            console.error(e);
+            resultBox.value = "❌ AI 识别失败，原因：" + e.message;
+            window.showToast("识别失败，请检查网络", "error");
         }
-    }; r.readAsDataURL(file);
-}
+        
+        // 恢复按钮状态
+        btn.disabled = false;
+        btn.innerHTML = `<i class="fa-solid fa-wand-magic-sparkles mr-2"></i>AI 自动提取文字`;
+    }
 
     window.saveBook = async function() {
         const id = document.getElementById('form-book-id').value.trim().toUpperCase();
