@@ -456,19 +456,17 @@
     }
     window.closePrintArea = () => document.getElementById('print-area').classList.add('hidden');
 
-    // ================== 核心升级：独立月份 NILAM 防错乱输入引擎 ==================
+    // ================== 核心升级：独立月份 NILAM 防错乱输入引擎 + Bahan/Bahasa 校验 ==================
     const nKeys = ['digital','bukanBuku','fiksyen','bukanFiksyen','bm','bi','lain']; 
     let cRStd = [];
     
     window.loadReadingList = async () => {
-        const m = document.getElementById('reading-month-select').value; if(!m) return alert("选择月份");
-        const y = m.split('-')[0]; document.getElementById('th-year').innerText = y + "年"; // 动态显示当前年份
+        const m = document.getElementById('reading-month-select').value; if(!m) return alert("请选择月份");
+        const y = m.split('-')[0]; document.getElementById('th-year').innerText = y + "年"; 
         document.getElementById('reading-list-container').classList.remove('hidden'); 
         const tbody = document.getElementById('reading-table-body'); tbody.innerHTML = '<tr><td colspan="10" class="p-4 text-center">读取中...</td></tr>';
         
-        // 1. 获取全班学生资料 (包含 lifetimeTotal, yearlyTotals)
         const stdSnap = await getDocs(query(collection(db, "students"), where("className", "==", currentClass)));
-        // 2. 获取本月该班已保存的记录
         const curSnap = await getDoc(doc(db, "monthlyRecords", `${currentClass}_${m}`)); 
         const curD = curSnap.exists() ? curSnap.data().records : {};
 
@@ -484,21 +482,22 @@
         tbody.innerHTML = ''; 
         cRStd.forEach(s => {
             let yearTotal = s.yearlyTotals[y] || 0;
-            let row = `<tr><td class="p-2 border font-mono">${s.id}</td><td class="p-2 border font-bold">${s.nameCn}</td>
+            // 加上 id="row_学号" 方便等下校验时标红
+            let row = `<tr id="row_${s.id}" class="transition-colors duration-300"><td class="p-2 border font-mono">${s.id}</td><td class="p-2 border font-bold">${s.nameCn}</td>
                        <td class="p-2 border bg-yellow-50 text-center font-black text-yellow-700">${yearTotal}</td>
                        <td class="p-2 border bg-orange-50 text-center font-black text-orange-700">${s.lifetimeTotal}</td>`;
             
             nKeys.forEach(k => { 
                 let savedVal = 0;
                 if (curD && curD[s.id] !== undefined && curD[s.id][k] !== undefined) {
-                    savedVal = curD[s.id][k]; // 如果本月已经填过了，显示已填的数值
+                    savedVal = curD[s.id][k]; 
                 } else if (k === 'digital') {
-                    savedVal = s.cumulativeDigital || 0; // Digital 没填过则显示历史累计作为起点
+                    savedVal = s.cumulativeDigital || 0; 
                 } else {
-                    savedVal = 0; // 其他所有格子没填过默认 0（本月独立新增量）
+                    savedVal = 0; 
                 }
-                // data-o 记录页面加载时的初始值，用来计算老师修改了多少差额(Delta)
-                row += `<td class="p-1 border"><input type="number" min="0" id="r_${s.id}_${k}" value="${savedVal}" data-o="${savedVal}" class="w-full text-center border p-2 font-bold focus:border-blue-500 rounded text-gray-800 shadow-inner"></td>`; 
+                // 加入 oninput 事件，老师输入时取消红底警告
+                row += `<td class="p-1 border"><input type="number" min="0" id="r_${s.id}_${k}" value="${savedVal}" data-o="${savedVal}" oninput="document.getElementById('row_${s.id}').classList.remove('bg-red-100')" class="w-full text-center border p-2 font-bold focus:border-blue-500 rounded text-gray-800 shadow-inner"></td>`; 
             });
             tbody.innerHTML += row + '</tr>';
         });
@@ -506,35 +505,71 @@
     }
 
     window.saveReadingStats = async () => {
+        // 【第一步：强力校验防火墙】
+        let hasError = false;
+        let errorMsg = "保存失败！以下学生的 BAHAN 和 BAHASA 数量不匹配：\n\n";
+
+        cRStd.forEach(s => {
+            // 获取老师输入的数值
+            const dig = parseInt(document.getElementById(`r_${s.id}_digital`).value) || 0;
+            const oldDig = parseInt(document.getElementById(`r_${s.id}_digital`).getAttribute('data-o')) || 0;
+            const deltaDig = Math.max(0, dig - oldDig); // Digital 本月新增量
+            
+            const buk = parseInt(document.getElementById(`r_${s.id}_bukanBuku`).value) || 0;
+            const fik = parseInt(document.getElementById(`r_${s.id}_fiksyen`).value) || 0;
+            const bFik = parseInt(document.getElementById(`r_${s.id}_bukanFiksyen`).value) || 0;
+            
+            const bm = parseInt(document.getElementById(`r_${s.id}_bm`).value) || 0;
+            const bi = parseInt(document.getElementById(`r_${s.id}_bi`).value) || 0;
+            const lain = parseInt(document.getElementById(`r_${s.id}_lain`).value) || 0;
+
+            // 计算本月新增的总Bahan 和 总Bahasa
+            const totalBahanNew = deltaDig + buk + fik + bFik;
+            const totalBahasaNew = bm + bi + lain;
+
+            // 如果不相等，拦截！
+            if (totalBahanNew !== totalBahasaNew) {
+                hasError = true;
+                errorMsg += `❌ ${s.nameCn} (${s.id}) : 新增 Bahan(${totalBahanNew}) != Bahasa(${totalBahasaNew})\n`;
+                // 将出错的学生那一行变成红色警示
+                document.getElementById(`row_${s.id}`).classList.add('bg-red-100');
+            }
+        });
+
+        if (hasError) {
+            alert(errorMsg + "\n请修改标红的行，确保读了多少种类的书，就对应多少种语言！\n(提示：Digital栏是累计总数，系统只计算本月修改增加的数量)");
+            return; // 终止保存！
+        }
+
+        // 【第二步：校验通过，开始保存】
         const m = document.getElementById('reading-month-select').value; const y = m.split('-')[0];
         const btn = event.target; btn.disabled = true; btn.innerText="保存计算中...";
         const batch = writeBatch(db); let monthlyInput = {}; let netToLibrary = {};
 
         cRStd.forEach(s => {
             monthlyInput[s.id] = {}; netToLibrary[s.id] = {};
-            let totalBahanDelta = 0; // 用来加进总累计的净增量 (仅包含 Bahan 类: digital, bukanBuku, fiksyen, bukanFiksyen)
-            let newCumDigital = s.cumulativeDigital; // 最新的 Digital 累计
+            let totalBahanDelta = 0; 
+            let newCumDigital = s.cumulativeDigital; 
 
             nKeys.forEach(k => {
                 const inputVal = parseInt(document.getElementById(`r_${s.id}_${k}`).value) || 0;
                 const oldInputVal = parseInt(document.getElementById(`r_${s.id}_${k}`).getAttribute('data-o')) || 0;
-                const delta = inputVal - oldInputVal; // 计算修改差额，防重复加
+                const delta = inputVal - oldInputVal; 
 
                 monthlyInput[s.id][k] = inputVal;
                 
                 if (k === 'digital') {
-                    netToLibrary[s.id][k] = Math.max(0, delta); // Digital是累计，差值即为本月净增
-                    newCumDigital = inputVal; // 更新个人资料库
+                    netToLibrary[s.id][k] = Math.max(0, delta); 
+                    newCumDigital = inputVal; 
                     totalBahanDelta += Math.max(0, delta);
                 } else {
-                    netToLibrary[s.id][k] = inputVal; // 其他栏目输入的就是净增量
+                    netToLibrary[s.id][k] = inputVal; 
                     if (['bukanBuku','fiksyen','bukanFiksyen'].includes(k)) {
-                        totalBahanDelta += delta; // 把这次修改增加的量（或减少的量）加入差额池
+                        totalBahanDelta += delta; 
                     }
                 }
             });
 
-            // 更新该学生一生的数据档案
             let updatedYearTotal = (s.yearlyTotals[y] || 0) + totalBahanDelta;
             let updatedLifetimeTotal = s.lifetimeTotal + totalBahanDelta;
             let yt = s.yearlyTotals; yt[y] = updatedYearTotal;
@@ -546,13 +581,11 @@
             });
         });
 
-        // 保存本月老师填写的表单，防下次打开清空
         batch.set(doc(db,"monthlyRecords",`${currentClass}_${m}`), { class: currentClass, month: m, records: monthlyInput });
-        // 供图书馆全校报表统计用的净增量
         batch.set(doc(db,"monthlyNetReads",`${currentClass}_${m}`), { class: currentClass, month: m, records: netToLibrary });
 
         try {
-            await batch.commit(); window.showToast("已保存提交","success"); window.loadReadingList(); // 重新拉取刷新数字
+            await batch.commit(); window.showToast("已保存提交","success"); window.loadReadingList(); 
         } catch(e) { window.showToast("保存失败","error"); } finally { btn.disabled=false; btn.innerText="保存本月记录并自动汇算"; }
     }
 
