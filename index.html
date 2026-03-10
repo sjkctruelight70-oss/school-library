@@ -117,33 +117,33 @@
             </div>
         </section>
 
-        <!-- ================= 模块3：学生管理与 Excel 导入 ================= -->
+        <!-- ================= 模块3：学生管理 ================= -->
         <section id="students" class="hidden max-w-6xl mx-auto">
             <div class="flex justify-between items-center mb-6">
-                <h2 class="text-2xl font-bold">学生与班级管理</h2>
+                <h2 class="text-2xl font-bold" id="student-title">学生管理</h2>
                 <div class="flex space-x-2">
-                    <button onclick="window.openStudentModal()" class="px-4 py-2 bg-blue-600 text-white rounded shadow hover:bg-blue-700"><i class="fa-solid fa-plus mr-2"></i>单笔添加</button>
-                    <!-- Excel 上传按钮 -->
+                    <button onclick="window.openStudentModal()" class="px-4 py-2 bg-blue-600 text-white rounded shadow hover:bg-blue-700"><i class="fa-solid fa-plus mr-2"></i>添加学生</button>
                     <input type="file" id="excel-upload" accept=".xlsx, .xls" class="hidden" onchange="window.handleExcelUpload(event)">
-                    <button onclick="document.getElementById('excel-upload').click()" class="px-4 py-2 bg-green-600 text-white rounded shadow hover:bg-green-700"><i class="fa-solid fa-file-excel mr-2"></i>Excel批量导入</button>
+                    <button onclick="document.getElementById('excel-upload').click()" class="px-4 py-2 bg-green-600 text-white rounded shadow hover:bg-green-700"><i class="fa-solid fa-file-excel mr-2"></i>Excel导入</button>
                 </div>
             </div>
-            <div class="mb-4 flex space-x-2 items-center">
-                <select id="filter-class" class="p-2 border rounded shadow-sm focus:outline-none" onchange="window.loadStudents()">
-                    <option value="ALL">全部班级 (展示所有)</option>
-                    <option value="一年1班">一年1班</option><option value="二年1班">二年1班</option><option value="三年1班">三年1班</option>
-                </select>
-                <button onclick="alert('Excel 表头必须严格设置为这 4 列：\n【学号】 【中文名】 【英文名】 【班级】\n例如：S1001 | 张三 | Ali | 一年1班')" class="text-sm text-gray-500 underline">Excel格式说明</button>
+            
+           <!-- 管理员专属工具栏：筛选班级 + 毕业升班工具 -->
+            <div id="admin-class-filter" class="mb-4 flex flex-col md:flex-row justify-between items-center hidden bg-purple-50 p-3 rounded-lg border border-purple-100">
+                <div class="flex items-center space-x-2 mb-2 md:mb-0">
+                    <label class="font-bold text-sm text-gray-600">筛选班级:</label>
+                    <select id="filter-class" class="p-2 border rounded shadow-sm focus:outline-none bg-white" onchange="window.loadStudents()">
+                        <option value="ALL">全部班级 (展示所有)</option>
+                        <!-- 选项由JS动态生成 -->
+                    </select>
+                </div>
+                <!-- 新学年毕业按钮 -->
+                <button onclick="window.graduateYear6()" id="btn-graduate" class="px-4 py-2 bg-purple-600 text-white font-bold rounded shadow hover:bg-purple-700 transition">
+                    <i class="fa-solid fa-graduation-cap mr-2"></i>新学年: 一键删除所有六年级学生
+                </button>
             </div>
+
             <div class="bg-white shadow-sm rounded-lg overflow-hidden border">
-                <table class="w-full text-left">
-                    <thead class="bg-gray-50 border-b">
-                        <tr><th class="p-4">学号</th><th class="p-4">中文名</th><th class="p-4">英文名</th><th class="p-4">班级</th><th class="p-4">操作</th></tr>
-                    </thead>
-                    <tbody id="student-table-body" class="divide-y divide-gray-100"></tbody>
-                </table>
-            </div>
-        </section>
 
         <!-- ================= 模块4：班主任 NILAM 录入 ================= -->
         <section id="reading" class="hidden max-w-full mx-auto">
@@ -533,75 +533,147 @@
             } catch(err) { window.showToast("Excel 解析失败，请检查表头", "error"); }
         }; reader.readAsBinaryString(file);
     }
+    // ================== 管理员专属：新学年一键清空功能 ==================
+    // ================== 管理员专属：新学年毕业六年级 ==================
+    window.graduateYear6 = async () => {
+        if (currentUserRole !== 'admin') return;
+        
+        if (!confirm("🎓 新学年操作：\n\n系统将查找所有班级名包含『 6 』的学生（如 6M, 6K 等），并将他们从系统中永久移除。\n其他年级学生不受影响，且历史报表依然保留。\n\n确定要执行毕业生离校操作吗？")) return;
 
-    // ================== 4. NILAM 班主任登记 (自动算净增量) ==================
+        try {
+            document.getElementById('btn-graduate').disabled = true;
+            document.getElementById('btn-graduate').innerText = "⏳ 正在欢送毕业生...";
+            window.showToast("开始清理六年级数据", "info");
+
+            const stdSnap = await getDocs(collection(db, "students"));
+            const batch = writeBatch(db);
+            let count = 0;
+
+            stdSnap.forEach(d => {
+                const s = d.data();
+                // 如果班级名称包含数字 "6" (例如 6M, 6K, 6B)
+                if (s.className && s.className.includes('6')) {
+                    batch.delete(doc(db, "students", d.id));
+                    count++;
+                }
+            });
+
+            if (count > 0) {
+                await batch.commit();
+                window.showToast(`✅ 成功移除了 ${count} 名六年级毕业生！`, "success");
+                window.loadStudents();
+            } else {
+                window.showToast("没有找到任何六年级学生", "info");
+            }
+        } catch (error) {
+            window.showToast("操作失败", "error");
+        } finally {
+            document.getElementById('btn-graduate').disabled = false;
+            document.getElementById('btn-graduate').innerHTML = `<i class="fa-solid fa-graduation-cap mr-2"></i>新学年: 一键删除所有六年级学生`;
+        }
+    }
+
+    // ================== 模块4：班主任 NILAM (跟学生走的终极版) ==================
     let currentReadingStudents = [];
     const nKeys = ['digital','bukanBuku','fiksyen','bukanFiksyen','bm','bi','lain'];
     
-    function getPrevMonthStr(currentMonthStr) {
-        if(!currentMonthStr) return "";
-        let [y, m] = currentMonthStr.split('-');
-        let d = new Date(parseInt(y), parseInt(m) - 2, 1);
-        return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2, '0')}`;
-    }
-
     window.loadReadingList = async () => {
-        const cls = document.getElementById('reading-class-select').value.trim();
         const month = document.getElementById('reading-month-select').value;
-        if(!cls || !month) return alert("请填写班级和月份");
+        if(!month) return alert("请选择月份");
 
         document.getElementById('reading-list-container').classList.remove('hidden');
         const tbody = document.getElementById('reading-table-body');
-        tbody.innerHTML = '<tr><td colspan="9" class="p-4 text-center">读取名单中...</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="9" class="p-4 text-center">读取名单中... <i class="fa-solid fa-spinner fa-spin"></i></td></tr>';
 
-        const stdSnap = await getDocs(query(collection(db, "students"), where("className", "==", cls)));
-        currentReadingStudents = []; stdSnap.forEach(d => currentReadingStudents.push({ id: d.id, ...d.data() }));
+        // 1. 强制查询本班学生
+        const stdSnap = await getDocs(query(collection(db, "students"), where("className", "==", currentClass)));
+        currentReadingStudents = []; 
+        
+        // 2. 检查本月是否已经保存过（如果有，读取本月最新填的；如果没有，读取学生个人的历史累计）
+        const curSnap = await getDoc(doc(db, "monthlyCumulatives", `${currentClass}_${month}`));
+        const curMonthData = curSnap.exists() ? curSnap.data().records : null;
 
-        const curSnap = await getDoc(doc(db, "monthlyCumulatives", `${cls}_${month}`));
-        const curData = curSnap.exists() ? curSnap.data().records : {};
+        stdSnap.forEach(d => {
+            let sData = d.data();
+            // 确保每个学生档案里有一个 cumulativeReads 对象来记录他“一生的累计”
+            if(!sData.cumulativeReads) {
+                sData.cumulativeReads = { digital:0, bukanBuku:0, fiksyen:0, bukanFiksyen:0, bm:0, bi:0, lain:0 };
+            }
+            currentReadingStudents.push({ id: d.id, ...sData });
+        });
 
         tbody.innerHTML = '';
         currentReadingStudents.forEach(s => {
             let row = `<tr class="border-b hover:bg-gray-50"><td class="p-2 border font-mono text-sm">${s.id}</td><td class="p-2 border text-sm whitespace-nowrap">${s.nameCn}</td>`;
             nKeys.forEach(k => {
-                const val = (curData[s.id] && curData[s.id][k]) ? curData[s.id][k] : 0;
-                row += `<td class="p-1 border"><input type="number" min="0" id="read_${s.id}_${k}" value="${val}" class="w-full min-w-[50px] p-2 text-center border focus:border-blue-500 rounded text-sm"></td>`;
+                // 如果本月填过，显示本月的；如果本月没填过，提取学生档案里【历史至今】的数量作为起点
+                let val = 0;
+                if (curMonthData && curMonthData[s.id] !== undefined) {
+                    val = curMonthData[s.id][k] || 0;
+                } else {
+                    val = s.cumulativeReads[k] || 0;
+                }
+                
+                // 记录起点值，为了等下计算“本月净增量”
+                let baseVal = s.cumulativeReads[k] || 0;
+                
+                row += `<td class="p-1 border">
+                            <input type="number" min="${baseVal}" id="read_${s.id}_${k}" value="${val}" data-base="${baseVal}" class="w-full min-w-[50px] p-2 text-center border focus:border-blue-500 rounded text-sm font-bold text-gray-700">
+                        </td>`;
             });
             tbody.innerHTML += row + '</tr>';
         });
-        if(currentReadingStudents.length===0) tbody.innerHTML = '<tr><td colspan="9" class="p-4 text-center text-red-500">该班级尚未录入学生</td></tr>';
+
+        if(currentReadingStudents.length === 0) tbody.innerHTML = '<tr><td colspan="9" class="p-4 text-center text-red-500">该班级尚未录入学生</td></tr>';
     }
 
     window.saveReadingStats = async () => {
-        const cls = document.getElementById('reading-class-select').value.trim();
         const curMonth = document.getElementById('reading-month-select').value;
-        const prevMonth = getPrevMonthStr(curMonth);
+        const btn = event.target;
+        btn.disabled = true; btn.innerText = "⏳ 正在保存并计算净增量...";
 
-        let newCumulatives = {};
+        let newCumulatives = {}; // 保存本月老师输入的绝对总数
+        let netIncrements = {};  // 计算本月新增了多少本
+
+        const batch = writeBatch(db); // 开启批量处理
+
         currentReadingStudents.forEach(s => {
             newCumulatives[s.id] = {};
-            nKeys.forEach(k => newCumulatives[s.id][k] = parseInt(document.getElementById(`read_${s.id}_${k}`).value) || 0);
-        });
-
-        const prevSnap = await getDoc(doc(db, "monthlyCumulatives", `${cls}_${prevMonth}`));
-        const prevData = prevSnap.exists() ? prevSnap.data().records : {};
-
-        let netIncrements = {};
-        currentReadingStudents.forEach(s => {
             netIncrements[s.id] = {};
+            let updatedStudentCumulative = {};
+
             nKeys.forEach(k => {
-                const pVal = (prevData[s.id] && prevData[s.id][k]) ? prevData[s.id][k] : 0;
-                netIncrements[s.id][k] = Math.max(0, newCumulatives[s.id][k] - pVal);
+                const inputEl = document.getElementById(`read_${s.id}_${k}`);
+                const newVal = parseInt(inputEl.value) || 0;
+                const baseVal = parseInt(inputEl.getAttribute('data-base')) || 0; // 提取上一次的历史起点
+                
+                newCumulatives[s.id][k] = newVal;
+                // 计算本月净增量：老师输入的新总数 - 历史总数
+                netIncrements[s.id][k] = Math.max(0, newVal - baseVal);
+                
+                // 准备更新学生个人的历史终身总数
+                updatedStudentCumulative[k] = Math.max(newVal, baseVal);
             });
+
+            // 【关键】：把最新累计量直接更新到这个学生的档案里！就算他明天换班，数量也跟着他走。
+            batch.update(doc(db, "students", s.id), { cumulativeReads: updatedStudentCumulative });
         });
+
+        // 1. 保存当前班级本月的【总快照】（防丢失用）
+        batch.set(doc(db, "monthlyCumulatives", `${currentClass}_${curMonth}`), { class: currentClass, month: curMonth, records: newCumulatives });
+        // 2. 保存当前班级本月的【净增量】（供图书馆报表汇总用，永久历史记录）
+        batch.set(doc(db, "monthlyNetReads", `${currentClass}_${curMonth}`), { class: currentClass, month: curMonth, records: netIncrements });
 
         try {
-            const batch = writeBatch(db);
-            batch.set(doc(db, "monthlyCumulatives", `${cls}_${curMonth}`), { class: cls, month: curMonth, records: newCumulatives });
-            batch.set(doc(db, "monthlyNetReads", `${cls}_${curMonth}`), { class: cls, month: curMonth, records: netIncrements });
             await batch.commit();
             window.showToast("✅ 数据已保存！系统已自动抽出本月净数据同步至图书馆", "success");
-        } catch(e) { window.showToast("保存失败", "error"); }
+            window.loadReadingList(); // 刷新表格更新起点
+        } catch(e) { 
+            console.error(e);
+            window.showToast("保存失败，请检查网络", "error"); 
+        } finally {
+            btn.disabled = false; btn.innerText = "保存并自动提交";
+        }
     }
 
     // ================== 5. NILAM 全校报表 ==================
