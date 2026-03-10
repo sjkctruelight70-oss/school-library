@@ -481,22 +481,64 @@
     window.handleExcelUpload = (e) => { const r = new FileReader(); r.onload = async (evt) => { window.showToast("解析写入中...", "loading"); const wb = XLSX.read(evt.target.result, {type:'binary'}); const json = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]); const batch = writeBatch(db); let c = 0; json.forEach(row => { const id = row['学号']; if(id){ batch.set(doc(db,"students",id.toString().trim().toUpperCase()), {nameCn:row['中文名']||'', nameEn:row['英文名']||'', className:currentUserRole==='teacher'?currentClass:(row['班级']||'未分配')}, {merge:true}); c++; } }); await batch.commit(); window.showToast(`更新 ${c} 人！`, "success"); window.loadStudents(); }; r.readAsBinaryString(e.target.files[0]); }
     window.graduateYear6 = async () => { if(!confirm("确定删除名字含 6 的学生吗？")) return; window.showToast("清理中...", "loading"); const snap = await getDocs(collection(db,"students")); const batch = writeBatch(db); let c=0; snap.forEach(d => { if(d.data().className?.includes('6')) { batch.delete(doc(db,"students",d.id)); c++; } }); await batch.commit(); window.showToast(`移除 ${c} 名`, "success"); window.loadStudents(); }
 
-    // ================== 条码打印 (带日期筛选机制) ==================
+    // ================== 条码打印引擎 (2cm 物理尺寸 + 极细高密度渲染) ==================
     window.closePrintArea = () => document.getElementById('print-area').classList.add('hidden');
     window.printBarcodes = async (type) => {
-        document.getElementById('print-area').classList.remove('hidden'); document.getElementById('print-grid').innerHTML = '<div class="col-span-4 text-center p-8">正在渲染条码，请稍候...</div>'; let items = [];
+        document.getElementById('print-area').classList.remove('hidden'); 
+        document.getElementById('print-grid').innerHTML = '<div class="col-span-full text-center p-8 text-xl font-bold"><i class="fa-solid fa-spinner fa-spin mr-2"></i> 正在渲染高密度条码，请稍候...</div>'; 
+        
+        let items = [];
         if (type === 'books') { 
             const dFilter = document.getElementById('barcode-date-filter').value;
-            if(!dFilter) { if(!confirm("您没有选择录入日期，系统将打印全库一千多本书的条码，这可能需要较长时间。确定要继续吗？")) { window.closePrintArea(); return; } }
+            if(!dFilter) { 
+                if(!confirm("您没有选择录入日期，系统将打印全库一千多本书的条码，这可能需要较长时间。确定要继续吗？")) { 
+                    window.closePrintArea(); return; 
+                } 
+            }
             document.getElementById('print-title').innerText = dFilter ? `书本条码 (录入日: ${dFilter})` : "书本条码 (全库)";
             
-            let q = collection(db, "books"); if(dFilter) q = query(q, where("addedDate", "==", dFilter));
-            const snap = await getDocs(q); snap.forEach(d => items.push({ id: d.id, name: d.data().title })); 
+            let q = collection(db, "books"); 
+            if(dFilter) q = query(q, where("addedDate", "==", dFilter));
+            const snap = await getDocs(q); 
+            snap.forEach(d => items.push({ id: d.id, name: d.data().title })); 
         } 
-        else { const tc = document.getElementById('filter-class') ? document.getElementById('filter-class').value : currentClass; document.getElementById('print-title').innerText = `${tc} 学生条码`; const snap = await getDocs(tc === 'ALL' ? collection(db,"students") : query(collection(db,"students"), where("className", "==", tc))); snap.forEach(d => items.push({ id: d.id, name: formatName(d.data().nameEn, d.data().nameCn) })); }
+        else { 
+            const tc = document.getElementById('filter-class') ? document.getElementById('filter-class').value : currentClass; 
+            document.getElementById('print-title').innerText = tc === 'ALL' ? "全校学生条码" : `${tc} 学生条码`; 
+            const snap = await getDocs(tc === 'ALL' ? collection(db,"students") : query(collection(db,"students"), where("className", "==", tc))); 
+            snap.forEach(d => items.push({ id: d.id, name: formatName(d.data().nameEn, d.data().nameCn) })); 
+        }
         
-        document.getElementById('print-grid').innerHTML = items.length===0 ? '<div class="col-span-4 text-center text-red-500 font-bold">没有找到符合条件的数据</div>' : '';
-        items.forEach((item, index) => { const cid = `barcode-${index}`; const box = document.createElement('div'); box.className = "print-item border p-4 rounded-xl flex flex-col items-center shadow-sm"; box.innerHTML = `<svg id="${cid}" class="w-full h-20"></svg><div class="text-sm font-black text-center truncate w-full mt-2">${item.name}</div>`; document.getElementById('print-grid').appendChild(box); JsBarcode(`#${cid}`, item.id, { format: "CODE128", displayValue: true, fontSize: 16, fontOptions: "bold", margin: 0, width: 2, height: 50 }); });
+        document.getElementById('print-grid').innerHTML = items.length === 0 ? '<div class="col-span-full text-center text-red-500 font-bold">没有找到符合条件的数据</div>' : '';
+        
+        // 动态修改打印排版：6列，间距更小，适合排版密集的小贴纸
+        document.getElementById('print-grid').className = "grid grid-cols-3 md:grid-cols-5 gap-4 print:grid-cols-6 print:gap-2";
+
+        items.forEach((item, index) => { 
+            const cid = `barcode-${index}`; 
+            const box = document.createElement('div'); 
+            
+            // 移除了多余的内边距，完全适配小贴纸
+            box.className = "print-item border border-gray-300 p-1 rounded flex flex-col items-center justify-center bg-white"; 
+            
+            // 关键：强制 SVG 容器的物理宽度为 2cm
+            box.innerHTML = `
+                <svg id="${cid}" style="width: 2cm; height: 1.2cm;"></svg>
+                <div class="text-[9px] font-black text-center truncate w-full mt-1 leading-none">${item.name}</div>
+            `; 
+            document.getElementById('print-grid').appendChild(box); 
+            
+            // 关键：调整引擎参数，生成极细的高密度条码，适应 2cm 的宽度
+            JsBarcode(`#${cid}`, item.id, { 
+                format: "CODE128", 
+                displayValue: true, 
+                fontSize: 12,       // 缩小文字
+                fontOptions: "bold", 
+                margin: 2,          // 压缩周围留白
+                width: 1.2,         // 【核心】线条宽度降到最细，确保在2cm内不糊
+                height: 40          // 降低条码高度
+            }); 
+        });
     }
 
     // ================== 借还核心 ==================
