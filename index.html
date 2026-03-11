@@ -387,7 +387,7 @@
     const db = initializeFirestore(app, { localCache: persistentLocalCache({tabManager: persistentMultipleTabManager()}) });
 
     const ALL_CLASSES = ['1M','1K','1B','1H','2M','2K','2B','2H','3M','3K','3B','3H','3U','4M','4K','4B','4H','5M','5K','5B','5H','6M','6K','6B','6H','6U'];
-    const STAFF_CLASS = 'TEACHER'; const BORROW_PERIOD_DAYS = 7; 
+    const STAFF_CLASS = 'TEACHER'; const BORROW_PERIOD_DAYS = -3; 
     let currentUserRole = null; let currentClass = null; let currentMode = 'borrow'; let sStd = null; let sBook = null; let allBooksCache = []; let ocrHighResBase64 = ""; let isEditingBook = false; 
 
     function getStandardDate(dateObj = new Date()) { return `${dateObj.getFullYear()}-${String(dateObj.getMonth() + 1).padStart(2, '0')}-${String(dateObj.getDate()).padStart(2, '0')}`; }
@@ -870,4 +870,5 @@
     }
 </script>
 </body>
+
 </html>
