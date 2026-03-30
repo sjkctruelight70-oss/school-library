@@ -777,6 +777,11 @@
             const oldNetSnap = await getDoc(doc(db, "monthlyNetReads", `${currentClass}_${m}`)); const oldNetD = oldNetSnap.exists() ? oldNetSnap.data().records : {};
 
             cRStd = []; stdSnap.forEach(d => { let s = d.data(); if(!s.lifetimeTotal) s.lifetimeTotal = 0; if(!s.yearlyTotals) s.yearlyTotals = {}; cRStd.push({id: d.id, ...s}); });
+             cRStd.sort((a, b) => {
+                const enA = (a.nameEn || '').toUpperCase();
+                const enB = (b.nameEn || '').toUpperCase();
+                return enA.localeCompare(enB);
+            });
             
             let htmlStr = ''; 
             cRStd.forEach(s => {
@@ -844,7 +849,25 @@
         
         try {
             const snap = await getDocs(query(collection(db, "students"), where("className", "==", cls)));
+            
+            // 🌟 先将文档转为数组，并按英文名 A-Z 排序
+            let adminStudents = [];
+            snap.forEach(d => adminStudents.push({ id: d.id, ...d.data() }));
+            adminStudents.sort((a, b) => {
+                const enA = (a.nameEn || '').toUpperCase();
+                const enB = (b.nameEn || '').toUpperCase();
+                return enA.localeCompare(enB);
+            });
+
             let htmlStr = '';
+            adminStudents.forEach(s => { 
+                const curYear = document.getElementById('admin-nilam-date').value.split('-')[0]; // 确保拿到年份
+                const yearTotal = s.yearlyTotals ? (s.yearlyTotals[curYear] || 0) : 0; 
+                const lifeTotal = s.lifetimeTotal || 0; 
+                let badgeClass = lifeTotal > 200 ? 'bg-orange-600 text-white shadow-lg' : 'bg-orange-100 text-orange-700'; 
+                htmlStr += `<tr class="border-b hover:bg-gray-50"><td class="p-4 font-mono font-bold">${s.id}</td><td class="p-4 font-black text-blue-800 text-lg">${formatName(s.nameEn, s.nameCn)}</td><td class="p-4 text-center font-black text-yellow-600 text-2xl">${yearTotal}</td><td class="p-4 text-center font-black"><span class="${badgeClass} px-4 py-1 rounded-full text-xl">${lifeTotal}</span></td></tr>`; 
+            });
+       
             snap.forEach(d => { 
                 const s = d.data(); const yearTotal = s.yearlyTotals ? (s.yearlyTotals[curYear] || 0) : 0; const lifeTotal = s.lifetimeTotal || 0; 
                 let badgeClass = lifeTotal > 200 ? 'bg-orange-600 text-white shadow-lg' : 'bg-orange-100 text-orange-700'; 
