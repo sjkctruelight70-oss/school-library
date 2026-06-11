@@ -719,12 +719,57 @@
         document.getElementById('ocr-result').value = ''; ocrHighResBase64 = ''; document.getElementById('modal-book').classList.remove('hidden'); document.getElementById('modal-book').classList.add('flex'); 
     }
     
+    // ================= 🌟 带有防呆拦截的保存引擎 =================
     window.saveBook = async () => { 
-        const id = document.getElementById('form-book-id').value.trim().toUpperCase(); if(!id || !document.getElementById('form-book-title').value.trim()) return window.showToast("编号和书名必填！", "warning"); 
-        window.showToast("保存中...", "loading");
-        const data = { title: document.getElementById('form-book-title').value, author: document.getElementById('form-book-author').value, category: document.getElementById('form-book-category').value, publisher: document.getElementById('form-book-publisher').value, isbn: document.getElementById('form-book-isbn').value, year: document.getElementById('form-book-year').value, price: document.getElementById('form-book-price').value, pages: document.getElementById('form-book-pages').value, language: document.getElementById('form-book-language').value, shelf: document.getElementById('form-book-shelf').value, accessLevel: document.getElementById('form-book-access').value, cover: document.getElementById('form-book-base64').value }; 
-        if(!isEditingBook) { data.status = 'in'; data.addedDate = getStandardDate(); } 
-        try { await setDoc(doc(db,"books",id), data, {merge: true}); window.showToast("成功入库","success"); window.closeModal('book'); window.loadBooks(); } catch (e) { window.showToast("网络异常","error"); }
+        const id = document.getElementById('form-book-id').value.trim().toUpperCase(); 
+        if(!id || !document.getElementById('form-book-title').value.trim()) {
+            return window.showToast("编号和书名必填！", "warning"); 
+        }
+
+        window.showToast("正在核验数据库...", "loading");
+
+        try {
+            // 🌟 核心防呆拦截：只有在录入【新书】时才去检查是否存在
+            if (!isEditingBook) {
+                const checkSnap = await getDoc(doc(db, "books", id));
+                if (checkSnap.exists()) {
+                    // 如果发现此编号已存在，强制中断保存！
+                    alert(`🚨 严重警告！\n\n您输入的书本编号 [ ${id} ] 已经存在于资料库中（书名：《${checkSnap.data().title}》）。\n\n请使用全新的编号，以防覆盖原有书籍资料！`);
+                    return window.showToast("录入失败：编号重复", "error");
+                }
+            }
+
+            // 组装数据
+            const data = { 
+                title: document.getElementById('form-book-title').value, 
+                author: document.getElementById('form-book-author').value, 
+                category: document.getElementById('form-book-category').value, 
+                publisher: document.getElementById('form-book-publisher').value, 
+                isbn: document.getElementById('form-book-isbn').value, 
+                year: document.getElementById('form-book-year').value, 
+                price: document.getElementById('form-book-price').value, 
+                pages: document.getElementById('form-book-pages').value, 
+                language: document.getElementById('form-book-language').value, 
+                shelf: document.getElementById('form-book-shelf').value, 
+                accessLevel: document.getElementById('form-book-access').value, 
+                cover: document.getElementById('form-book-base64').value 
+            }; 
+            
+            // 新书初始化参数
+            if(!isEditingBook) { 
+                data.status = 'in'; 
+                data.addedDate = getStandardDate(); 
+            } 
+            
+            window.showToast("保存上传中...", "loading");
+            await setDoc(doc(db,"books",id), data, {merge: true}); 
+            window.showToast("🎉 成功入库", "success"); 
+            window.closeModal('book'); 
+            window.loadBooks(); 
+            
+        } catch (e) { 
+            window.showToast("网络异常，保存失败", "error"); 
+        }
     }
 
     // 批量导入导出
@@ -899,7 +944,33 @@
         document.getElementById('modal-student').classList.remove('hidden'); document.getElementById('modal-student').classList.add('flex'); 
     }
     
-    window.saveStudent = async () => { const id = document.getElementById('form-std-id').value.trim().toUpperCase(); if(!id) return window.showToast("编号必填", "warning"); window.showToast("写入中...", "loading"); const fc = document.getElementById('form-std-class').value; try { await setDoc(doc(db,"students",id), {nameCn:document.getElementById('form-std-namecn').value, nameEn:document.getElementById('form-std-nameen').value, className:fc}, {merge:true}); window.showToast("已保存","success"); window.closeModal('student'); window.loadStudents(); } catch (e) { window.showToast("保存失败","error"); } }
+// ================= 🌟 带有防呆拦截的学生保存引擎 =================
+    window.saveStudent = async () => { 
+        const id = document.getElementById('form-std-id').value.trim().toUpperCase(); 
+        if(!id) return window.showToast("证件号必填", "warning"); 
+        
+        window.showToast("核验身份库中...", "loading"); 
+        const fc = document.getElementById('form-std-class').value; 
+        
+        try {
+            // 🌟 如果此时学号输入框不是被禁用状态（代表是新增模式，而非编辑模式）
+            if (!document.getElementById('form-std-id').disabled) {
+                const checkSnap = await getDoc(doc(db, "students", id));
+                if (checkSnap.exists()) {
+                    alert(`🚨 拦截警告！\n\n证件号/学号 [ ${id} ] 已被注册使用。\n注册人：${checkSnap.data().nameCn || checkSnap.data().nameEn}\n\n请更换证件号！`);
+                    return window.showToast("注册失败：证件号重复", "error");
+                }
+            }
+
+            window.showToast("写入中...", "loading"); 
+            await setDoc(doc(db,"students",id), {nameCn:document.getElementById('form-std-namecn').value, nameEn:document.getElementById('form-std-nameen').value, className:fc}, {merge:true}); 
+            window.showToast("档案保存成功", "success"); 
+            window.closeModal('student'); 
+            window.loadStudents(); 
+        } catch (e) { 
+            window.showToast("保存失败，请检查网络", "error"); 
+        } 
+    }
     
     window.handleExcelUpload = (e) => { 
         const f = e.target.files[0]; if(!f) return; const r = new FileReader(); 
