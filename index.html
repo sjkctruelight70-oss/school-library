@@ -777,7 +777,15 @@
         filtered.sort((a, b) => {
             if (sortType === 'title') return (a.title || '').localeCompare(b.title || '', 'zh-Hans-CN', { sensitivity: 'accent' });
             if (sortType === 'id') return (a.id || '').localeCompare(b.id || '');
-            if (sortType === 'addedDate') { const da = a.addedDate || ''; const db = b.addedDate || ''; return db.localeCompare(da); }
+            if (sortType === 'addedDate') {
+                const da = a.addedDate || '';
+                const db = b.addedDate || '';
+                if (da !== db) return db.localeCompare(da); // 先按日期倒序
+                // 同一天内：按精确时间戳倒序，越晚上传越靠前
+                const ta = a.addedTimestamp || 0;
+                const tb = b.addedTimestamp || 0;
+                return tb - ta;
+            }
             return 0;
         });
 
@@ -881,6 +889,7 @@
             if(!isEditingBook) {
                 data.status = 'in';
                 data.addedDate = getStandardDate();
+                data.addedTimestamp = Date.now(); // 精确到毫秒，确保同一天内按上传顺序排列
             }
 
             window.showToast("保存上传中...", "loading");
@@ -906,7 +915,7 @@
             window.showToast("批量写入...", "loading");
             try {
                 const wb = XLSX.read(evt.target.result, {type:'binary'}); const json = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]); const batch = writeBatch(db); let c = 0;
-                json.forEach(row => { const id = row['编号']||row['系统编号']; if(id) { batch.set(doc(db,"books",id.toString().trim().toUpperCase()), { title:row['书名']||'', category:row['类别']||'故事书', author:row['作者']||'', publisher:row['出版社']||'', isbn:row['ISBN']||'', year:row['出版年']||row['年份']||'', price:row['价格']||row['价钱']||'', pages:row['页数']||'', language:row['语言']||'', shelf:row['书架']||'', accessLevel:(row['借阅权限']&&row['借阅权限'].includes('教师'))?'teacher_only':'public', status:'in', addedDate: getStandardDate() }, {merge:true}); c++; } });
+                json.forEach(row => { const id = row['编号']||row['系统编号']; if(id) { batch.set(doc(db,"books",id.toString().trim().toUpperCase()), { title:row['书名']||'', category:row['类别']||'故事书', author:row['作者']||'', publisher:row['出版社']||'', isbn:row['ISBN']||'', year:row['出版年']||row['年份']||'', price:row['价格']||row['价钱']||'', pages:row['页数']||'', language:row['语言']||'', shelf:row['书架']||'', accessLevel:(row['借阅权限']&&row['借阅权限'].includes('教师'))?'teacher_only':'public', status:'in', addedDate: getStandardDate(), addedTimestamp: Date.now() }, {merge:true}); c++; } });
                 await batch.commit(); window.showToast(`导入 ${c} 本`, "success"); window.loadBooks();
             } catch(err) { window.showToast("解析失败", "error"); }
         }; r.readAsBinaryString(f);
