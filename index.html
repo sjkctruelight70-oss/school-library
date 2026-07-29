@@ -132,7 +132,7 @@
             </div>
             <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div class="bg-white p-6 rounded-xl shadow-sm border">
-                    <div class="mb-6"><label class="block text-sm font-bold text-gray-700 mb-2">1. 扫描借阅人证件 (S开头/教工码)</label><input type="text" id="scan-student-input" class="w-full border-2 p-3 rounded-lg focus:border-blue-500 focus:outline-none text-lg uppercase font-bold" placeholder="请在此扫描/输入" onkeypress="if(event.key==='Enter') window.processScan('student')"></div>
+                    <div class="mb-6"><label id="scan-student-label" class="block text-sm font-bold text-gray-700 mb-2">1. 扫描借阅人证件 (S开头/教工码)</label><input type="text" id="scan-student-input" class="w-full border-2 p-3 rounded-lg focus:border-blue-500 focus:outline-none text-lg uppercase font-bold" placeholder="请在此扫描/输入" onkeypress="if(event.key==='Enter') window.processScan('student')"></div>
                     <div><label class="block text-sm font-bold text-gray-700 mb-2">2. 扫描书本条码 (B开头)</label><input type="text" id="scan-book-input" class="w-full border-2 p-3 rounded-lg focus:border-blue-500 focus:outline-none text-lg uppercase font-bold" placeholder="请在此扫描/输入" onkeypress="if(event.key==='Enter') window.processScan('book')"></div>
                     <button onclick="window.submitBorrowReturn()" id="btn-submit-action" disabled class="mt-8 w-full py-4 bg-gray-400 text-white rounded-lg font-bold text-xl shadow disabled:opacity-50">等待扫描...</button>
                 </div>
@@ -444,6 +444,18 @@
                     <button onclick="window.triggerReportPrint()" class="px-4 py-2 bg-gray-700 text-white rounded shadow font-bold"><i class="fa-solid fa-print"></i> 打印</button>
                 </div>
             </div>
+            <!-- 🌟 各班级每月报告提交状态面板 -->
+            <div class="bg-white p-5 rounded-xl shadow-sm border border-green-200 mb-6 print-hidden">
+                <div class="flex flex-col md:flex-row md:items-center justify-between mb-3 gap-3">
+                    <h3 class="font-bold text-gray-700 text-lg"><i class="fa-solid fa-clipboard-check mr-2 text-green-600"></i>各班级每月报告提交状态</h3>
+                    <div class="flex items-center gap-2">
+                        <span class="text-sm font-bold text-gray-500">查询月份:</span>
+                        <input type="month" id="submission-month" class="border-2 border-green-300 p-2 rounded text-green-800 font-bold focus:outline-none">
+                        <button onclick="window.checkSubmissionStatus()" class="px-4 py-2 bg-green-600 text-white rounded shadow font-bold hover:bg-green-700 transition"><i class="fa-solid fa-magnifying-glass mr-1"></i>查看状态</button>
+                    </div>
+                </div>
+                <div id="submission-status-panel" class="hidden"></div>
+            </div>
             <div class="print-break-inside-avoid">
                 <h2 class="hidden print:block text-2xl font-bold mb-4 text-center text-purple-800 border-b pb-2">月度 NILAM 统计总表 - <span id="print-report-month"></span></h2>
                 <div id="report-content" class="hidden grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -629,6 +641,16 @@
     function getStandardDate(dateObj = new Date()) { return `${dateObj.getFullYear()}-${String(dateObj.getMonth() + 1).padStart(2, '0')}-${String(dateObj.getDate()).padStart(2, '0')}`; }
     function formatName(en, cn) { return `${en||''} ${cn?`(${cn})`:''}`.trim() || '未知'; }
 
+    // 🌟 名单统一字母排序:优先英文名,缺则中文名,再缺则学号 (解决只填中文名时乱序问题)
+    function getSortKey(s) {
+        const en = (s.nameEn || '').trim();
+        if (en) return en.toUpperCase();
+        const cn = (s.nameCn || '').trim();
+        if (cn) return cn;
+        return (s.id || '').toUpperCase();
+    }
+    function sortByName(a, b) { return getSortKey(a).localeCompare(getSortKey(b)); }
+
     // Toast 提示引擎
     let toastTimeout;
     window.showToast = (msg, type = 'success') => {
@@ -662,6 +684,7 @@
             const today = getStandardDate();
             document.getElementById('admin-nilam-date').value = today;
             document.getElementById('report-month').value = today.substring(0, 7);
+            document.getElementById('submission-month').value = today.substring(0, 7);
             document.getElementById('log-start-date').value = today; document.getElementById('log-end-date').value = today;
             document.getElementById('usage-start-date').value = today; document.getElementById('usage-end-date').value = today;
 
@@ -688,7 +711,17 @@
         currentMode = mode; sStd = null; sBook = null;
         document.getElementById('btn-mode-borrow').className = mode === 'borrow' ? "px-6 py-2 bg-blue-600 text-white rounded-md font-bold shadow transition" : "px-6 py-2 text-gray-600 rounded-md font-bold hover:bg-gray-300 transition";
         document.getElementById('btn-mode-return').className = mode === 'return' ? "px-6 py-2 bg-blue-600 text-white rounded-md font-bold shadow transition" : "px-6 py-2 text-gray-600 rounded-md font-bold hover:bg-gray-300 transition";
-        document.getElementById('scan-student-input').value = ''; document.getElementById('scan-book-input').value = '';
+        // 🌟 归还模式:借阅人无需扫描
+        const sLabel = document.getElementById('scan-student-label');
+        const sInput = document.getElementById('scan-student-input');
+        if (mode === 'return') {
+            sLabel.innerHTML = '1. 扫描借阅人证件 <span class="text-green-600">(归还无需扫描,可直接跳过)</span>';
+            sInput.disabled = true; sInput.classList.add('bg-gray-100','opacity-60','cursor-not-allowed'); sInput.placeholder = '归还时无需扫描,直接扫书本';
+        } else {
+            sLabel.innerHTML = '1. 扫描借阅人证件 (S开头/教工码)';
+            sInput.disabled = false; sInput.classList.remove('bg-gray-100','opacity-60','cursor-not-allowed'); sInput.placeholder = '请在此扫描/输入';
+        }
+        sInput.value = ''; document.getElementById('scan-book-input').value = '';
         updateBorrowUI();
         document.getElementById(mode === 'borrow' ? 'scan-student-input' : 'scan-book-input').focus();
     }
@@ -725,6 +758,8 @@
         if(sStd) {
             let badge = sStd.className === STAFF_CLASS ? '<span class="bg-blue-600 text-white px-2 py-1 rounded shadow">教职工</span>' : `<span class="bg-blue-50 text-gray-700 border px-2 py-1 rounded">${sStd.className}</span>`;
             stdHtml = `<div class="text-xl font-black text-blue-700">${formatName(sStd.nameEn, sStd.nameCn)}</div><div class="mt-2 text-gray-600 font-bold">${badge} | 证件: ${sStd.id}</div>`;
+        } else if (currentMode === 'return') {
+            stdHtml = '<div class="text-green-600 font-bold flex items-center gap-2"><i class="fa-solid fa-circle-check"></i>归还模式无需扫描借阅人,直接扫书本即可</div>';
         }
         stdUI.innerHTML = stdHtml;
 
@@ -1043,7 +1078,7 @@
 
         let sorted = [...allStudentsCache];
         sorted.sort((a, b) => {
-            if (sortType === 'nameEn') { const enA = (a.nameEn || '').toUpperCase(); const enB = (b.nameEn || '').toUpperCase(); return enA.localeCompare(enB); }
+            if (sortType === 'nameEn') return sortByName(a, b);
             if (sortType === 'id') return (a.id || '').localeCompare(b.id || '');
             if (sortType === 'className') return (a.className || '').localeCompare(b.className || '');
             return 0;
@@ -1303,34 +1338,43 @@
         const y = m.split('-')[0]; document.getElementById('th-year').innerText = y + "年";
         document.getElementById('reading-list-container').classList.remove('hidden'); const tbody = document.getElementById('reading-table-body'); tbody.innerHTML = '<tr><td colspan="11" class="p-12 text-center text-blue-600 font-black"><i class="fa-solid fa-spinner fa-spin mr-3"></i>读取中...</td></tr>';
         try {
-            const [stdSnap, curSnap, oldNetSnap, ...histSnaps] = await Promise.all([
+            // 🌟 锚点逻辑：找本年度最近一个有填 digital 的月份（跨年则归 0）；漏填月份不影响锚点
+            const prevMonth = getPrevMonthStr(m);
+            const crossYear = prevMonth.split('-')[0] !== y;
+
+
+            // 跨年 → 直接归 0；否则只取本年度最近一个月的锚点（遇到当月无记录则跳过，继续往前；一旦取到立即停止）
+            const prevDigitalMap = {};
+            if (!crossYear) {
+                let scanMM = parseInt(m.split('-')[1]) - 1;
+                let scanYY = parseInt(y);
+                let anchorSet = false;
+                for (let i = 0; i < 11 && !anchorSet; i++) {
+                    if (scanMM < 1) { scanMM = 12; scanYY--; }
+                    const snap = await getDoc(doc(db, "monthlyRecords", `${currentClass}_${scanYY}-${String(scanMM).padStart(2,'0')}`));
+                    if (snap.exists()) {
+                        const rec = snap.data().records || {};
+                        const sidCount = Object.keys(rec).length;
+                        if (sidCount > 0) {
+                            anchorSet = true;
+                            for (const sid in rec) prevDigitalMap[sid] = rec[sid]?.digital || 0;
+                        }
+                    }
+                    scanMM--;
+                }
+            }
+
+            const [stdSnap, curSnap, oldNetSnap] = await Promise.all([
                 getDocs(query(collection(db, "students"), where("className", "==", currentClass))),
                 getDoc(doc(db, "monthlyRecords", `${currentClass}_${m}`)),
-                getDoc(doc(db, "monthlyNetReads", `${currentClass}_${m}`)),
-                ...Array.from({length: 13}, (_, offset) => {
-                    let mm = parseInt(m.split('-')[1]) - offset - 1; let yy = parseInt(m.split('-')[0]);
-                    while (mm < 1) { mm += 12; yy--; }
-                    return getDoc(doc(db, "monthlyRecords", `${currentClass}_${yy}-${String(mm).padStart(2,'0')}`));
-                })
+                getDoc(doc(db, "monthlyNetReads", `${currentClass}_${m}`))
             ]);
-
-            // 🌟 并行扫描历史月份，取每个学生历史上最大AINS累计值作为锚点
-            const allTimeAinsMap = {};
-            histSnaps.forEach(snap => {
-                if (snap.exists()) {
-                    const rec = snap.data().records || {};
-                    for (const sid in rec) {
-                        const dig = rec[sid]?.digital || 0;
-                        if (!allTimeAinsMap[sid] || dig > allTimeAinsMap[sid]) allTimeAinsMap[sid] = dig;
-                    }
-                }
-            });
 
             const curD = curSnap.exists() ? curSnap.data().records : {};
             const oldNetD = oldNetSnap.exists() ? oldNetSnap.data().records : {};
 
             cRStd = []; stdSnap.forEach(d => { let s = d.data(); if(!s.lifetimeTotal) s.lifetimeTotal = 0; if(!s.yearlyTotals) s.yearlyTotals = {}; cRStd.push({id: d.id, ...s}); });
-            cRStd.sort((a, b) => (a.nameEn || '').toUpperCase().localeCompare((b.nameEn || '').toUpperCase()));
+            cRStd.sort(sortByName);
 
             let htmlStr = '';
             cRStd.forEach(s => {
@@ -1338,7 +1382,9 @@
                 let row = `<tr id="row_${s.id}" class="transition border-b hover:bg-blue-50"><td class="p-2 border font-mono font-bold text-center">${s.id}</td><td class="p-2 border font-black text-blue-800 text-center">${formatName(s.nameEn, s.nameCn)}</td><td class="p-2 border bg-yellow-50 text-center font-black text-yellow-700 text-xl">${yearTotal}</td><td class="p-2 border bg-orange-50 text-center font-black text-orange-700 text-xl">${s.lifetimeTotal}</td>`;
                 nKeys.forEach(k => {
                     let valToShow = (curD && curD[s.id] && curD[s.id][k] !== undefined) ? curD[s.id][k] : 0;
-                    let baseDigital = allTimeAinsMap[s.id] || 0;
+                    // 🌟 跨年则锚点为 0（每年重新累计）；否则取本年度最近非零锚点
+                    let baseDigital = crossYear ? 0 : (prevDigitalMap[s.id] || 0);
+
                     let oldNetVal = (oldNetD && oldNetD[s.id]) ? (oldNetD[s.id][k] || 0) : 0;
                     row += `<td class="p-1 border"><input type="number" min="0" id="r_${s.id}_${k}" value="${valToShow}" data-base-dig="${baseDigital}" data-old-net="${oldNetVal}" oninput="document.getElementById('row_${s.id}').classList.remove('bg-red-100')" class="w-full text-center border-2 p-2 font-black focus:border-blue-600 bg-blue-50 rounded outline-none transition"></td>`;
                 });
@@ -1427,10 +1473,7 @@
 
             let adminStudents = [];
             snap.forEach(d => adminStudents.push({ id: d.id, ...d.data() }));
-            adminStudents.sort((a, b) => {
-                const enA = (a.nameEn || '').toUpperCase(); const enB = (b.nameEn || '').toUpperCase();
-                return enA.localeCompare(enB);
-            });
+            adminStudents.sort(sortByName);
 
             let htmlStr = '';
             adminStudents.forEach(s => {
@@ -1456,6 +1499,30 @@
             const sSnap = await getDocs(query(collection(db,"students"), where("className", "!=", STAFF_CLASS)));
             document.getElementById('r-totalStudents').innerText=`实测学生人数: ${sSnap.size}`; document.getElementById('r-purata').innerText=(b/(sSnap.size||1)).toFixed(2); window.showToast("生成完毕","success");
         } catch (e) { window.showToast("生成崩溃", "error"); }
+    }
+
+    // 🌟 各班级每月报告提交状态核对 (按月查 monthlyRecords 集合)
+    window.checkSubmissionStatus = async () => {
+        const m = document.getElementById('submission-month').value || document.getElementById('report-month').value;
+        if(!m) return window.showToast("请先选择查询月份", "warning");
+        const panel = document.getElementById('submission-status-panel');
+        panel.classList.remove('hidden');
+        panel.innerHTML = '<div class="text-center text-green-500 font-bold p-4"><i class="fa-solid fa-spinner fa-spin mr-2"></i>正在核对各班提报...</div>';
+        try {
+            const snap = await getDocs(collection(db, "monthlyRecords"));
+            const submitted = new Set();
+            snap.forEach(d => { if (d.id.endsWith('_' + m)) submitted.add(d.id.slice(0, -('_' + m).length)); });
+            let done = 0;
+            let html = '<div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-2">';
+            ALL_CLASSES.forEach(cls => {
+                const ok = submitted.has(cls);
+                if (ok) done++;
+                html += `<div class="flex items-center justify-between px-3 py-2 rounded-lg border font-bold text-sm ${ok ? 'bg-green-50 border-green-400 text-green-700' : 'bg-red-50 border-red-400 text-red-600'}"><span>${cls}</span><span>${ok ? '<i class="fa-solid fa-circle-check"></i>' : '<i class="fa-solid fa-circle-xmark"></i>'}</span></div>`;
+            });
+            html += '</div>';
+            html += `<div class="mt-4 text-center font-black text-lg ${done === ALL_CLASSES.length ? 'text-green-600' : 'text-orange-600'}">已提交 ${done} / ${ALL_CLASSES.length} 班 ${done === ALL_CLASSES.length ? '🎉 全部完成' : '⏳ 尚有班级未提交'}</div>`;
+            panel.innerHTML = html;
+        } catch(e) { panel.innerHTML = '<div class="text-red-500 p-2 font-bold">核对失败,请检查网络</div>'; }
     }
 
     window.loadOverdueBooks = async () => {
