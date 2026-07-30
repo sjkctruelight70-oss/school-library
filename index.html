@@ -1346,11 +1346,15 @@
             // 跨年 → 直接归 0；否则只取本年度最近一个月的锚点（遇到当月无记录则跳过，继续往前；一旦取到立即停止）
             const prevDigitalMap = {};
             if (!crossYear) {
+                const targetYear = parseInt(y);
                 let scanMM = parseInt(m.split('-')[1]) - 1;
-                let scanYY = parseInt(y);
+                let scanYY = targetYear;
                 let anchorSet = false;
                 for (let i = 0; i < 11 && !anchorSet; i++) {
+                    // 🌟 边界检查：在构造查询前先调整年份
                     if (scanMM < 1) { scanMM = 12; scanYY--; }
+                    // 🌟 只扫当年，跨年直接停止
+                    if (scanYY < targetYear) break;
                     const snap = await getDoc(doc(db, "monthlyRecords", `${currentClass}_${scanYY}-${String(scanMM).padStart(2,'0')}`));
                     if (snap.exists()) {
                         const rec = snap.data().records || {};
