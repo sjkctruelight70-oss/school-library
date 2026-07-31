@@ -370,6 +370,7 @@
                     <select id="admin-nilam-filter" class="p-2 border rounded font-bold text-blue-800 bg-blue-50" onchange="window.loadAdminNilam()"><option value="">-- 请选择班级 --</option></select>
                     <button onclick="window.exportToExcel('admin-nilam-table', '全校阅读档案')" class="px-4 py-2 bg-green-600 text-white font-bold rounded shadow"><i class="fa-solid fa-file-excel mr-2"></i>导出</button>
                     <button onclick="window.triggerReportPrint()" class="px-4 py-2 bg-gray-700 text-white rounded shadow font-bold"><i class="fa-solid fa-print"></i> 打印</button>
+                    <button onclick="window.fixYearlyTotals()" class="px-4 py-2 bg-red-600 text-white rounded shadow font-bold hover:bg-red-700 transition" title="修复 yearlyTotals 中的错误年份key"><i class="fa-solid fa-wrench mr-1"></i>修复</button>
                 </div>
             </div>
             <div class="print-break-inside-avoid">
@@ -1334,7 +1335,9 @@
 
 
     window.loadReadingList = async () => {
-        const m = document.getElementById('reading-month-select').value; if(!m) return window.showToast("请指定月份", "warning"); window.showToast("提取快照...", "loading");
+        const rawMonth = document.getElementById('reading-month-select').value;
+        const m = normalizeMonth(rawMonth);
+        if(!m) return window.showToast("请指定月份", "warning"); window.showToast("提取快照...", "loading");
         const y = m.split('-')[0]; document.getElementById('th-year').innerText = y + "年";
         document.getElementById('reading-list-container').classList.remove('hidden'); const tbody = document.getElementById('reading-table-body'); tbody.innerHTML = '<tr><td colspan="11" class="p-12 text-center text-blue-600 font-black"><i class="fa-solid fa-spinner fa-spin mr-3"></i>读取中...</td></tr>';
         try {
@@ -1398,14 +1401,139 @@
         } catch (e) { tbody.innerHTML = '<tr><td colspan="11" class="text-center text-red-500 p-8">连接中断</td></tr>'; }
     }
 
-    window.saveReadingStats = async () => {
-        const m = document.getElementById('reading-month-select').value; const y = m.split('-')[0];
-        let hasError = false; let errorMsg = "🛑 双重铁规拦截:\n\n";
+    // ===== 🌟 Excel 智能粘贴：支持复制 Excel 任意范围后直接粘贴到对应格子 =====
+    document.addEventListener('paste', (e) => {
+        const wrap = document.getElementById('reading-list-container');
+        if (!wrap || wrap.classList.contains('hidden')) return;
 
+        const text = (e.clipboardData || window.clipboardData).getData('text');
+        if (!text) return;
+
+        // 🌟 解析 Excel 复制的 2D 数据结构（tab=列分隔，newline=行分隔）
+        const rawRows = text.split(/\r?\n/).filter(l => l.trim() !== '');
+        if (rawRows.length === 0) return;
+
+        // 解析成 2D 数组
+        const pasteData = rawRows.map(row => {
+            return row.split('\t').map(cell => {
+                const cleaned = cell.trim();
+                const num = parseFloat(cleaned.replace(/,/g, ''));
+                return isNaN(num) ? null : Math.floor(num);
+            });
+        });
+
+        // 单格数字（普通输入框粘贴）→ 不拦截
+        if (pasteData.length === 1 && pasteData[0].length === 1 && pasteData[0][0] !== null) return;
+
+        e.preventDefault();
+
+        const tbody = document.getElementById('reading-table-body');
+        if (!tbody) return;
+
+        // 判断是否有单元格被聚焦，以此为粘贴起点
+        const focused = document.activeElement;
+        let startRowIdx = 0;
+        let startColName = null;
+        if (focused && focused.id && /^r_.+_.+$/.test(focused.id)) {
+            const parts = focused.id.split('_');
+            startRowIdx = cRStd.findIndex(s => s.id === parts[1]);
+            startColName = parts[2];
+        }
+
+        // 建立列名顺序（对应 Excel 左→右）
+        const colNames = ['digital', 'bukanBuku', 'fiksyen', 'bukanFiksyen', 'bm', 'bi', 'lain'];
+        let startColIdx = startColName ? colNames.indexOf(startColName) : 0;
+        if (startColIdx < 0) startColIdx = 0;
+
+        // 🌟 逐格粘贴：pasteData[row][col] → 对应 (rowIdx, colName) 的输入框
+        let filledCount = 0;
+        const maxRows = cRStd.length;
+
+        pasteData.forEach((rowData, rOffset) => {
+            const rowIdx = startRowIdx + rOffset;
+            if (rowIdx >= maxRows) return;
+            const sid = cRStd[rowIdx].id;
+
+            rowData.forEach((val, cOffset) => {
+                if (val === null) return;
+                const colIdx = startColIdx + cOffset;
+                if (colIdx >= colNames.length) return;
+                const colName = colNames[colIdx];
+                const input = document.getElementById(`r_${sid}_${colName}`);
+                if (!input) return;
+                input.value = val;
+                input.dispatchEvent(new Event('input'));
+                input.classList.add('ring-2', 'ring-blue-400');
+                filledCount++;
+            });
+        });
+
+        if (filledCount > 0) {
+            window.showToast(`📋 已粘贴 ${filledCount} 个格子`, 'success');
+        } else {
+            window.showToast('粘贴内容未识别到有效数字', 'warning');
+        }
+    });
+
+    // 🌟 统一月份格式：确保所有浏览器都返回 YYYY-MM（处理 Safari 手动输入的情况）
+    const MONTH_NAMES = {
+        'january': '01', 'jan': '01', 'januari': '01',
+        'february': '02', 'feb': '02', 'februari': '02',
+        'march': '03', 'mar': '03', 'mac': '03',
+        'april': '04', 'apr': '04', 'april': '04',
+        'may': '05', 'mei': '05',
+        'june': '06', 'jun': '06', 'jun': '06',
+        'july': '07', 'jul': '07', 'julai': '07',
+        'august': '08', 'aug': '08', 'ogos': '08',
+        'september': '09', 'sep': '09', 'sept': '09',
+        'october': '10', 'oct': '10', 'oktober': '10',
+        'november': '11', 'nov': '11',
+        'december': '12', 'dec': '12', 'disember': '12'
+    };
+    const normalizeMonth = (raw) => {
+        if (!raw) return '';
+        raw = raw.trim();
+        // 已经是 YYYY-MM 格式
+        if (/^\d{4}-\d{2}$/.test(raw)) return raw;
+        // 处理 "July 2026" 或 "2026 July" 格式
+        const parts = raw.split(/[\s\-_\/]+/);
+        let year = '', month = '';
+        for (const part of parts) {
+            const lower = part.toLowerCase();
+            if (/^\d{4}$/.test(part)) {
+                year = part;
+            } else if (MONTH_NAMES[lower]) {
+                month = MONTH_NAMES[lower];
+            } else if (/^\d{1,2}$/.test(part)) {
+                month = part.padStart(2, '0');
+            }
+        }
+        if (year && month) return `${year}-${month}`;
+        // 尝试解析日期对象
+        const d = new Date(raw);
+        if (!isNaN(d.getTime())) {
+            return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+        }
+        return raw;
+    };
+
+    window.saveReadingStats = async () => {
+        const rawMonth = document.getElementById('reading-month-select').value;
+        const m = normalizeMonth(rawMonth);
+        const y = m.split('-')[0];
+        let retroErrorCount = 0;
+        let autoFixCount = 0;
+        let autoFixDetails = [];
+
+        // ===== 第一遍：自动修复 BAHAN≠BAHASA，并检查倒退 =====
         cRStd.forEach(s => {
             const digInput = parseInt(document.getElementById(`r_${s.id}_digital`).value) || 0;
             const prevDigital = parseInt(document.getElementById(`r_${s.id}_digital`).getAttribute('data-base-dig')) || 0;
-            if (digInput < prevDigital) { hasError = true; errorMsg += `❌ [${formatName(s.nameEn, s.nameCn)}] 的累计值不能倒退!\n   当前填入: ${digInput} < 上月: ${prevDigital}\n`; document.getElementById(`row_${s.id}`).classList.add('bg-red-100'); }
+            if (digInput < prevDigital) {
+                retroErrorCount++;
+                document.getElementById(`row_${s.id}`).classList.add('bg-red-100');
+                return;
+            }
             const deltaDig = Math.max(0, digInput - prevDigital);
             const buk = parseInt(document.getElementById(`r_${s.id}_bukanBuku`).value) || 0;
             const fik = parseInt(document.getElementById(`r_${s.id}_fiksyen`).value) || 0;
@@ -1414,10 +1542,28 @@
             const bi = parseInt(document.getElementById(`r_${s.id}_bi`).value) || 0;
             const lain = parseInt(document.getElementById(`r_${s.id}_lain`).value) || 0;
 
-            const tBahan = deltaDig + buk + fik + bFik; const tBahasa = bm + bi + lain;
-            if (tBahan !== tBahasa) { hasError = true; errorMsg += `❌ [${formatName(s.nameEn, s.nameCn)}] BAHAN(${tBahan}) ≠ BAHASA(${tBahasa})\n`; document.getElementById(`row_${s.id}`).classList.add('bg-red-100'); }
+            const tBahan = deltaDig + buk + fik + bFik;
+            const tBahasa = bm + bi + lain;
+
+            if (tBahan !== tBahasa) {
+                // 🌟 自动补差：让 BAHASA = BAHAN → newLain = tBahan - (bm + bi)
+                const newLain = Math.max(0, tBahan - (bm + bi));
+                const lainInput = document.getElementById(`r_${s.id}_lain`);
+                lainInput.value = newLain;
+                lainInput.classList.add('ring-2', 'ring-yellow-400');
+                autoFixCount++;
+                autoFixDetails.push(formatName(s.nameEn, s.nameCn));
+            }
         });
-        if (hasError) return window.showToast("双重铁规拦截!", "error"), alert(errorMsg);
+
+        if (retroErrorCount > 0) {
+            window.showToast(`❌ 有 ${retroErrorCount} 位学生的累计值不能倒退，请手动修正`, "error");
+            return;
+        }
+
+        if (autoFixCount > 0) {
+            window.showToast(`⚡ 已自动补差 ${autoFixCount} 行至 Lain-Lain格`, "success");
+        }
 
         window.showToast("写入核算中...", "loading");
         try {
@@ -1490,7 +1636,9 @@
     }
 
     window.generateReport = async () => {
-        const m = document.getElementById('report-month').value; if(!m) return window.showToast("指定查询月份", "warning");
+        const rawMonth = document.getElementById('report-month').value;
+        const m = normalizeMonth(rawMonth);
+        if(!m) return window.showToast("指定查询月份", "warning");
         document.getElementById('report-content').classList.remove('hidden'); document.getElementById('print-report-month').innerText = m;
         window.showToast("全校汇算中...", "loading");
         try {
@@ -1507,7 +1655,8 @@
 
     // 🌟 各班级每月报告提交状态核对 (按月查 monthlyRecords 集合)
     window.checkSubmissionStatus = async () => {
-        const m = document.getElementById('submission-month').value || document.getElementById('report-month').value;
+        const rawMonth = document.getElementById('submission-month').value || document.getElementById('report-month').value;
+        const m = normalizeMonth(rawMonth);
         if(!m) return window.showToast("请先选择查询月份", "warning");
         const panel = document.getElementById('submission-status-panel');
         panel.classList.remove('hidden');
@@ -1528,6 +1677,52 @@
             panel.innerHTML = html;
         } catch(e) { panel.innerHTML = '<div class="text-red-500 p-2 font-bold">核对失败,请检查网络</div>'; }
     }
+
+    // 🌟 [修复] 清理 yearlyTotals 中的错误 key（如 July 2026, JUN 2026 等非4位年份key）
+    window.fixYearlyTotals = async () => {
+        if (!confirm('⚠️ 此操作将清理 students 集合中 yearlyTotals 的非标准年份 key（如 \"July 2026\"、\"JUNE 2026\"），并将对应的值从 lifetimeTotal 中扣除。\n建议先备份 Firestore 数据。确认执行？')) return;
+        window.showToast("正在扫描...", "loading");
+        try {
+            const classesToFix = ['3K', '6K'];
+            let totalFixed = 0;
+            for (const cls of classesToFix) {
+                const snap = await getDocs(query(collection(db, "students"), where("className", "==", cls)));
+                const batch = writeBatch(db);
+                let count = 0;
+                snap.forEach(d => {
+                    const data = d.data();
+                    const yt = data.yearlyTotals || {};
+                    // 找出非4位数字的 key（如 \"July 2026\", \"JUNE 2026\", \"jun 2026\" 等）
+                    let overcount = 0;
+                    const cleanYt = {};
+                    for (const key of Object.keys(yt)) {
+                        if (/^\d{4}$/.test(key.trim())) {
+                            cleanYt[key] = yt[key]; // 标准年份 key，保留
+                        } else {
+                            overcount += yt[key] || 0; // 错误 key，累加并删除
+                        }
+                    }
+                    if (overcount > 0 || Object.keys(cleanYt).length !== Object.keys(yt).length) {
+                        // 重新计算 lifetimeTotal = 所有有效年份累加
+                        const recalcLife = Object.values(cleanYt).reduce((sum, v) => sum + (v || 0), 0);
+                        batch.update(doc(db, "students", d.id), {
+                            yearlyTotals: cleanYt,
+                            lifetimeTotal: recalcLife
+                        });
+                        count++;
+                    }
+                });
+                if (count > 0) {
+                    await batch.commit();
+                    totalFixed += count;
+                }
+            }
+            window.showToast(`✅ 修复完成！共修正 ${totalFixed} 位学生的累计值`, "success");
+            if (typeof window.loadAdminNilam === 'function') window.loadAdminNilam();
+        } catch (e) {
+            window.showToast("❌ 修复失败：" + e.message, "error");
+        }
+    };
 
     window.loadOverdueBooks = async () => {
         const tbody = document.getElementById('overdue-table-body'); tbody.innerHTML = '<tr><td colspan="7" class="p-8 text-center text-red-500"><i class="fa-solid fa-spinner fa-spin mr-2"></i>排查中...</td></tr>';
