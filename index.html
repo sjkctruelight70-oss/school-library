@@ -745,7 +745,19 @@
                     if (currentMode === 'borrow' && sBook.status === 'out') { window.showToast("❌ 拦截:此书已被借出!", "error"); sBook = null; }
                     else if (currentMode === 'return' && sBook.status === 'in') { window.showToast("i️ 此书在馆内,无需归还", "warning"); sBook = null; }
                     else if (currentMode === 'borrow' && sBook.accessLevel === 'teacher_only' && (!sStd || sStd.className !== STAFF_CLASS)) { window.showToast("❌ 权限不足:此书限定教职工借阅", "error"); sBook = null; }
-                    else window.showToast(`✅ 图书验证成功: ${sBook.title}`, "success");
+                    else if (currentMode === 'borrow' && sStd) {
+                        // 🌟 限制：每人每次只能借1本，未还前不能再借
+                        const existingSnap = await getDocs(query(collection(db, "books"), where("borrowerId", "==", sStd.id), where("status", "==", "out")));
+                        if (!existingSnap.empty) {
+                            const existing = existingSnap.docs[0].data();
+                            window.showToast(`❌ 拦截:${sStd.nameCn}已有1本书未还:\n《${existing.title}》`, "error");
+                            sBook = null;
+                        } else {
+                            window.showToast(`✅ 图书验证成功: ${sBook.title}`, "success");
+                        }
+                    } else {
+                        window.showToast(`✅ 图书验证成功: ${sBook.title}`, "success");
+                    }
                 }
             } else { window.showToast(`❌ 查无此条码 (${code})`, "error"); type === 'student' ? sStd = null : sBook = null; }
         } catch(e) { window.showToast("数据库通讯失败", "error"); }
